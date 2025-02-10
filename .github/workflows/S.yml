@@ -1,0 +1,68 @@
+name: Cloudflared SSH Tunnel
+
+on: 
+  workflow_dispatch:
+
+jobs:
+  ssh-access:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Install OpenSSH Server
+        run: |
+          echo "Updating packages..." >> /home/runner/ssh_setup.log
+          sudo apt update >> /home/runner/ssh_setup.log 2>&1
+          sudo apt install -y openssh-server >> /home/runner/ssh_setup.log 2>&1
+          sudo service ssh start >> /home/runner/ssh_setup.log 2>&1
+          echo "root:Root123" | sudo chpasswd >> /home/runner/ssh_setup.log 2>&1
+          echo "Password for root has been set to Root123." >> /home/runner/ssh_setup.log
+
+      - name: Allow root login
+        run: |
+          echo "Allowing root login..." >> /home/runner/ssh_setup.log
+          sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config >> /home/runner/ssh_setup.log 2>&1
+          sudo service ssh restart >> /home/runner/ssh_setup.log 2>&1
+          echo "Root login enabled." >> /home/runner/ssh_setup.log
+
+      - name: Install Cloudflared
+        run: |
+          echo "Installing Cloudflared..." >> /home/runner/ssh_setup.log
+          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared >> /home/runner/ssh_setup.log 2>&1
+          sudo mv cloudflared /usr/local/bin/ >> /home/runner/ssh_setup.log 2>&1
+          sudo chmod +x /usr/local/bin/cloudflared >> /home/runner/ssh_setup.log 2>&1
+          echo "Cloudflared installed." >> /home/runner/ssh_setup.log
+
+      - name: Create Cloudflared Directory
+        run: |
+          echo "Creating Cloudflared directory..." >> /home/runner/ssh_setup.log
+          mkdir -p /home/runner/.cloudflared >> /home/runner/ssh_setup.log 2>&1
+
+      - name: Save Cloudflared Tunnel Credentials
+        env:
+          SSH_CREDENTIALS: ${{ secrets.SSH_CREDENTIALS }}
+        run: |
+          echo "Saving Cloudflared tunnel credentials..." >> /home/runner/ssh_setup.log
+          echo "${SSH_CREDENTIALS}" > /home/runner/.cloudflared/ssh_tunnel.json
+          echo "Cloudflared credentials saved." >> /home/runner/ssh_setup.log
+
+      - name: Run Existing Cloudflare Tunnel for SSH
+        run: |
+          echo "Starting Cloudflare tunnel for SSH..." >> /home/runner/ssh_setup.log
+          cloudflared tunnel --credentials-file /home/runner/.cloudflared/ssh_tunnel.json run ssh >> /home/runner/ssh_setup.log 2>&1 &
+
+          # Timeout logic and monitoring
+          timeout=9999
+          start_time=$(date +%s)
+          while :; do
+            current_time=$(date +%s)
+            elapsed=$((current_time - start_time))
+            if [ $elapsed -ge $timeout ]; then
+              break
+            fi
+            sleep 60
+          done
+          echo "Cloudflare tunnel is running." >> /home/runner/ssh_setup.log
+
+          
