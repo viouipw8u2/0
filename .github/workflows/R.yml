@@ -1,0 +1,47 @@
+name: Cloudflared RDP Tunnel
+
+on: 
+  workflow_dispatch
+
+jobs:
+  rdp-access:
+    runs-on: windows-latest
+    steps:
+      - name: Download Cloudflared
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "$env:USERPROFILE\cloudflared.exe" | Out-Null
+
+      - name: Enable RDP
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 | Out-Null
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop" | Out-Null
+          
+      - name: Set RDP Username and Password
+        run: |
+          $username = "V"
+          $password = ConvertTo-SecureString "Root123" -AsPlainText -Force
+          if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
+              New-LocalUser -Name $username -Password $password | Out-Null
+          }
+          Add-LocalGroupMember -Group "Administrators" -Member $username | Out-Null
+
+      - name: Create Cloudflared Directory
+        run: |
+          New-Item -ItemType Directory -Path "$env:USERPROFILE\.cloudflared" -Force | Out-Null
+
+      - name: Save Cloudflared Tunnel Credentials
+        env:
+          TCP_CREDENTIALS: ${{ secrets.TCP_CREDENTIALS }}
+        run: |
+          $credentialPath = "$env:USERPROFILE\.cloudflared\tcp_tunnel.json"
+          Set-Content -Path $credentialPath -Value $Env:TCP_CREDENTIALS | Out-Null
+
+      - name: Run Existing Cloudflare Tunnel for RDP
+        run: |
+          Start-Process -NoNewWindow -FilePath "$env:USERPROFILE\cloudflared.exe" -ArgumentList "tunnel", "--credentials-file", "$env:USERPROFILE\.cloudflared\tcp_tunnel.json", "run", "tcp" | Out-Null
+          
+          $timeout = [TimeSpan]::FromMinutes(9999)
+          $sw = [System.Diagnostics.Stopwatch]::StartNew()
+          while ($sw.Elapsed -lt $timeout) {
+            Start-Sleep -Seconds 60
+          }
